@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+option go_package = "/pb";
+package crawler;
+
+// Service that receive the URLs to be crawled
+service CrawlerService {
+  // Process the URL and returns an status
+  rpc ProcessUrl(UrlRequest) returns (UrlResponse) {}
+}
+
+// URL request
+message UrlRequest {
+  string requestId = 1;
+  string url = 2;
+}
+
+// URL response
+message UrlResponse {
+  enum Status {
+    STATUS_UNKNOWN = 0;
+    STATUS_ACCEPTED = 1; // URL was accepted and is ready to be processed
+    STATUS_RETRY = 2; // There is an issue and the service is requiring to retry later
+    STATUS_UNAVAILABLE = 3; // The service is unavailable
+  }
+  string requestId = 1;
+  Status status = 2;
+}

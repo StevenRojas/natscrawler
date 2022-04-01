@@ -1,0 +1,25 @@
+grpc:
+  address: 0.0.0.0:7777
+
+nats:
+  host: 0.0.0.0:4222
+  allow_reconnect: true
+  max_reconnect_attempts: 5
+  reconnect_wait: 5s
+  timeout: 1s
+
+queue:
+  topic: crawler
+  group: crawlers
+
+monitor:
+  topic: monitoring
+
+database:
+  host: 127.0.0.1
+  port: 5432
+  database: crawler
+  username: ct-user
+  password: ct-pass
+  ssl_mode: disable
+  migrate: false

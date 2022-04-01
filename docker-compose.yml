@@ -1,0 +1,62 @@
+version: "3.5"
+
+services:
+  nats:
+    image: nats
+    container_name: nats
+    ports:
+      - "8222:8222"
+    networks: [ "ctNet" ]
+
+  database:
+    image: 'postgres:latest'
+    container_name: database
+    ports:
+      - "5432:5432"
+    networks: [ "ctNet" ]
+    environment:
+      POSTGRES_USER: "ct-user"
+      POSTGRES_PASSWORD: "ct-pass"
+      POSTGRES_DB: "crawler"
+      PGDATA: /data/postgres
+#    volumes:
+#      - db:/data/postgres
+
+  crawler:
+    container_name: crawler
+    build:
+      context: "./crawler"
+    links:
+      - nats
+    depends_on:
+      - nats
+    networks: [ "ctNet" ]
+
+  listener:
+    container_name: listener
+    build:
+      context: "./listener"
+    ports:
+      - "7777:7777"
+    links:
+      - nats
+    depends_on:
+      - nats
+      - crawler
+    networks: [ "ctNet" ]
+
+  reader:
+    container_name: reader
+    build:
+      context: "./reader"
+    depends_on:
+      - listener
+    networks: [ "ctNet" ]
+
+networks:
+  ctNet:
+    name: ctNet
+
+volumes:
+  database:
+    driver: local

@@ -11,12 +11,14 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
 )
 
 type crawlerServer struct {
 	pb.UnimplementedCrawlerServiceServer
 	natsClient *nats.Conn
 	topic string
+	urlCount int
 }
 
 // ProcessUrl get a URL and send it to NATS queue to be processed by the crawler services
@@ -32,6 +34,9 @@ func (c *crawlerServer) ProcessUrl(ctx context.Context, request *pb.UrlRequest) 
 	if err != nil {
 		return nil, err
 	}
+
+	c.displayCount()
+
 	// publish encoded proto request to NATS
 	err = c.natsClient.Publish(c.topic, encoded)
 	if err != nil {
@@ -40,8 +45,18 @@ func (c *crawlerServer) ProcessUrl(ctx context.Context, request *pb.UrlRequest) 
 
 	return &pb.UrlResponse{
 		RequestId: request.RequestId,
-		Status: pb.UrlResponse_STATUS_ACCEPTED,
+		Status:    pb.UrlResponse_STATUS_ACCEPTED,
 	}, nil
+}
+
+func (c *crawlerServer) displayCount() {
+	c.urlCount++
+	if c.urlCount == 1 {
+		log.Print("\033[H\033[2J")
+		log.Print("Starting getting URLs to be send to the Queue")
+	}
+	log.Printf("\033[4;4H")
+	log.Printf("URL received: %d", c.urlCount)
 }
 
 // NewListener creates a new listener instance
@@ -58,6 +73,8 @@ func NewListener(conf config.AppConfig) error {
 	if err != nil {
 		return err
 	}
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Lmsgprefix)
 	return nil
 }
 

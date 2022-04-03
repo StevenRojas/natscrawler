@@ -1,15 +1,17 @@
-FROM golang:1.17.8-alpine
+FROM golang:1.17.8-alpine as builder
 
 WORKDIR /build
+RUN mkdir /build/app
 
-COPY go.mod .
-COPY go.sum .
+COPY ../grpcapi /build/grpcapi
+COPY ./crawler/go.mod /build/app
+COPY ./crawler/go.sum /build/app
+WORKDIR /build/app
 RUN go mod download
 
-COPY . .
-RUN go get
-RUN go build -o crawler
+COPY ./crawler/ /build/app
+RUN go build -o crawler cmd/main.go
 
-EXPOSE 8080
-ENTRYPOINT ["/build/crawler"]
-# ENTRYPOINT ["ping", "google.com"]
+ENTRYPOINT ["./crawler"]
+
+#ENTRYPOINT ["ping", "google.com"]

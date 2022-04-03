@@ -2,7 +2,7 @@ grpc:
   address: 0.0.0.0:7777
 
 nats:
-  host: 0.0.0.0:4222
+  host: nats:4222
   allow_reconnect: true
   max_reconnect_attempts: 5
   reconnect_wait: 5s

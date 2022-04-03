@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/StevenRojas/natscrawler/crawler/config"
 	"github.com/StevenRojas/natscrawler/crawler/pkg/model"
@@ -10,7 +11,12 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/golang/protobuf/proto"
 	"github.com/nats-io/nats.go"
+	"io"
 	"log"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,14 +28,37 @@ type Crawler interface {
 	Process(ctx context.Context)
 }
 
+type chromeService struct {
+	Browser              string `json:"Browser"`
+	ProtocolVersion      string `json:"Protocol-Version"`
+	UserAgent            string `json:"User-Agent"`
+	V8Version            string `json:"V8-Version"`
+	WebKitVersion        string `json:"WebKit-Version"`
+	WebSocketDebuggerUrl string `json:"webSocketDebuggerUrl"`
+}
+
 type crawlerService struct {
 	repo       repository.Repository
 	natsClient *nats.Conn
 	topic      string
 	group      string
+	wsUrl      string
+	useAPI     bool
 }
 
 func NewCrawler(repo repository.Repository, conf config.AppConfig) (Crawler, error) {
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Lmsgprefix)
+
+	var webSocketDebuggerUrl string
+	if !conf.Crawler.UseAPI {
+		cs, err := getChromeInfo()
+		if err != nil {
+			return nil, err
+		}
+		webSocketDebuggerUrl = cs.WebSocketDebuggerUrl
+	}
+
 	nc, err := connectToNats(conf)
 	if err != nil {
 		return nil, err
@@ -39,7 +68,40 @@ func NewCrawler(repo repository.Repository, conf config.AppConfig) (Crawler, err
 		natsClient: nc,
 		topic:      conf.Queue.Topic,
 		group:      conf.Queue.Group,
+		wsUrl:      webSocketDebuggerUrl,
+		useAPI:     conf.Crawler.UseAPI,
 	}, nil
+}
+
+func getChromeInfo() (*chromeService, error) {
+	req, err := http.NewRequest("GET", "http://chrome:9222/json/version", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Host = "localhost"
+	client := &http.Client{}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unable to get Chrome service information: %s", resp.Status)
+	}
+	var cs chromeService
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(body, &cs)
+	if err != nil {
+		return nil, err
+	}
+	cs.WebSocketDebuggerUrl = strings.Replace(cs.WebSocketDebuggerUrl, "localhost", "chrome:9222", 1)
+	log.Print("\033[H\033[2J")
+	log.Printf("Connecting to chrome at %s", cs.WebSocketDebuggerUrl)
+	return &cs, nil
 }
 
 // Process get URL from queue, collect information and store it, using Fan-In Fan-Out pattern
@@ -92,8 +154,12 @@ func (c *crawlerService) collect(ctx context.Context, messages <-chan model.UrlI
 	resultChannel := make(chan model.UrlInfo)
 	go func() {
 		for message := range messages {
-			fmt.Println("Got task request on:", message.RequestID, message.Url)
-			resultChannel <- doCrawler(ctx, message)
+			log.Println("Got task request on:", message.RequestID, message.Url)
+			if c.useAPI {
+				resultChannel <- doAPI(ctx, message)
+			} else {
+				resultChannel <- c.doCrawler(ctx, message)
+			}
 		}
 		close(resultChannel)
 	}()
@@ -115,7 +181,7 @@ func (c *crawlerService) storeResults(ctx context.Context, collectors ...<-chan 
 				urlInfo.Stats.Collector.Duration = time.Since(urlInfo.Stats.Collector.StartAt).Milliseconds()
 				err := c.repo.AddURL(ctx, urlInfo)
 				if err != nil {
-					fmt.Printf("error storing URL info in the DB: %s\n", err.Error())
+					log.Printf("error storing URL info in the DB: %s\n", err.Error())
 				}
 			}
 		}
@@ -128,7 +194,7 @@ func (c *crawlerService) storeResults(ctx context.Context, collectors ...<-chan 
 	}()
 }
 
-func doCrawler(ctx context.Context, urlInfo model.UrlInfo) model.UrlInfo {
+func (c *crawlerService) doCrawler(ctx context.Context, urlInfo model.UrlInfo) model.UrlInfo {
 	ctx, cancel := chromedp.NewContext(ctx)
 	defer cancel()
 	urlInfo.Stats.Waiting.EndAt = time.Now().UTC()
@@ -143,8 +209,9 @@ func doCrawler(ctx context.Context, urlInfo model.UrlInfo) model.UrlInfo {
 		var name string
 		var ratingValue string
 		var ratingCount string
-
-		err := chromedp.Run(ctx,
+		ctx, _ = chromedp.NewRemoteAllocator(ctx, c.wsUrl)
+		ctxt, _ := chromedp.NewContext(ctx)
+		err := chromedp.Run(ctxt,
 			chromedp.Navigate(urlInfo.Url),
 			chromedp.WaitReady(`.Roku-User-Channels`),
 			chromedp.Text(`h1[itemprop="name"]`, &name, chromedp.NodeVisible),
@@ -177,6 +244,52 @@ func doCrawler(ctx context.Context, urlInfo model.UrlInfo) model.UrlInfo {
 	}
 }
 
+func doAPI(ctx context.Context, urlInfo model.UrlInfo) model.UrlInfo {
+	urlInfo.Stats.Waiting.EndAt = time.Now().UTC()
+	urlInfo.Stats.Waiting.Duration = time.Since(urlInfo.Stats.Waiting.StartAt).Milliseconds()
+	urlInfo.Stats.Collector.StartAt = time.Now().UTC()
+	urlInfo.Success = false
+	parsed, _ := url.Parse(urlInfo.Url)
+	parts := strings.Split(parsed.Path, "/")
+	var uri string
+	if len(parts) == 4 {
+		uri = fmt.Sprintf("https://%s/api/v6/channels/detailsunion/%s", parsed.Host, parts[2])
+	} else {
+		locale := strings.Split(parts[1], "-")
+		uri = fmt.Sprintf("https://%s/api/v6/channels/detailsunion/%s?country=%s&language=%s", parsed.Host, parts[3], locale[1], locale[0])
+	}
+	response, err := http.Get(uri)
+	if err != nil {
+		fmt.Printf("URL error %+v\n", uri)
+		urlInfo.LastError = err.Error()
+		return urlInfo
+	}
+	if response.StatusCode != 200 {
+		fmt.Printf("URL response != 200 %+v\n", uri)
+		urlInfo.LastError = fmt.Sprintf("unable to get API information: %s", response.Status)
+		return urlInfo
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		urlInfo.LastError = err.Error()
+		return urlInfo
+	}
+	var apiResponse map[string]interface{}
+	err = json.Unmarshal(body, &apiResponse)
+	if err != nil {
+		urlInfo.LastError = err.Error()
+		return urlInfo
+	}
+	feed := apiResponse["feedChannel"].(map[string]interface{})
+	rating := (feed["starRating"].(float64) * 5) / 100
+	urlInfo.AppName = feed["name"].(string)
+	urlInfo.Rating = math.Round(rating*100) / 100
+	if feed["starRatingCount"] != nil {
+		urlInfo.RatingCount = int(feed["starRatingCount"].(float64))
+	}
+	return urlInfo
+}
+
 // connectToNats connect to NATS server
 func connectToNats(conf config.AppConfig) (*nats.Conn, error) {
 	opts := nats.Options{
@@ -191,6 +304,6 @@ func connectToNats(conf config.AppConfig) (*nats.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Connected to NATS at:", nc.ConnectedUrl())
+	log.Println("Connected to NATS at:", nc.ConnectedUrl())
 	return nc, nil
 }

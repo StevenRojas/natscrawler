@@ -27,16 +27,11 @@ var (
 
 // AppConfig struct
 type AppConfig struct {
-	Grpc       GrpcServer `mapstructure:"grpc"`
 	Nats       NatsServer `mapstructure:"nats"`
 	Queue      Queue      `mapstructure:"queue"`
 	Monitoring Monitoring `mapstructure:"monitor"`
 	Database   Database   `mapstructure:"database"`
-}
-
-// GrpcServer GRPC server configuration
-type GrpcServer struct {
-	Address string `mapstructure:"address"`
+	Crawler    Crawler    `mapstructure:"crawler"`
 }
 
 // NatsServer NATS server configuration
@@ -70,6 +65,11 @@ type Database struct {
 	Port     int    `mapstructure:"port"`
 	SSLMode  string `mapstructure:"ssl_mode"`
 	Migrate  bool   `mapstructure:"migrate"`
+}
+
+// Crawler configuration
+type Crawler struct {
+	UseAPI bool `mapstructure:"use_api"`
 }
 
 // Setup bind command flags and environment variables

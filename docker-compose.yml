@@ -6,36 +6,50 @@ services:
     container_name: nats
     ports:
       - "8222:8222"
-    networks: [ "ctNet" ]
+    networks: ["ctNet"]
+
+  chrome:
+    image: zenika/alpine-chrome:latest
+    command: [ chromium-browser, "--headless", "--disable-gpu", "--no-sandbox", "--remote-debugging-address=0.0.0.0", "--remote-debugging-port=9222" ]
+#    ports:
+#      - "9222:9222"
+    networks: ["ctNet"]
 
   database:
     image: 'postgres:latest'
     container_name: database
     ports:
-      - "5432:5432"
-    networks: [ "ctNet" ]
+      - "5444:5432"
+    networks: ["ctNet"]
     environment:
       POSTGRES_USER: "ct-user"
       POSTGRES_PASSWORD: "ct-pass"
       POSTGRES_DB: "crawler"
       PGDATA: /data/postgres
-#    volumes:
-#      - db:/data/postgres
+    volumes:
+      - ./db:/data/postgres
+      - ./docs/dump.sql:/docker-entrypoint-initdb.d/dump.sql
 
   crawler:
-    container_name: crawler
     build:
-      context: "./crawler"
+      context: "./"
+      dockerfile: ./crawler/Dockerfile
     links:
       - nats
+      - database
+      - chrome
     depends_on:
       - nats
-    networks: [ "ctNet" ]
+      - database
+      - chrome
+    networks: ["ctNet"]
+    restart: on-failure
 
   listener:
     container_name: listener
     build:
-      context: "./listener"
+      context: "./"
+      dockerfile: ./listener/Dockerfile
     ports:
       - "7777:7777"
     links:
@@ -43,15 +57,17 @@ services:
     depends_on:
       - nats
       - crawler
-    networks: [ "ctNet" ]
+    networks: ["ctNet"]
+    restart: on-failure
 
   reader:
     container_name: reader
     build:
-      context: "./reader"
+      context: "./"
+      dockerfile: ./reader/Dockerfile
     depends_on:
       - listener
-    networks: [ "ctNet" ]
+    networks: ["ctNet"]
 
 networks:
   ctNet:

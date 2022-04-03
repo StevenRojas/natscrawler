@@ -1,15 +1,15 @@
 FROM golang:1.17.8-alpine
 
 WORKDIR /build
+RUN mkdir /build/app
 
-COPY go.mod .
-COPY go.sum .
+COPY ../grpcapi /build/grpcapi
+COPY ./reader/go.mod /build/app
+COPY ./reader/go.sum /build/app
+WORKDIR /build/app
 RUN go mod download
 
-COPY . .
-RUN go get
-RUN go build -o reader
+COPY ./reader/ /build/app
+RUN go build -o reader cmd/main.go
 
-EXPOSE 8080
-ENTRYPOINT ["/build/reader"]
-# ENTRYPOINT ["ping", "google.com"]
+CMD tail -f /dev/null

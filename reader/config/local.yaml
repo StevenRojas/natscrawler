@@ -1,5 +1,5 @@
 grpc:
-  listener_address: 0.0.0.0:7777
+  listener_address: listener:7777
   dial_timeout: 1s
   request_timeout: 100ms
   ping_interval: 10s
